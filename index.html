@@ -48,8 +48,15 @@ function makeApi(url) {
 }
 
 // ── 설정 저장 (sessionStorage → localStorage 순으로 시도) ────
+// ★ Apps Script URL을 여기에 입력하세요 ★
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwwjPaeKKM8YiV7Z-8LR31UpRLcdUa8jHje19zOnpVa1B9GNl-dZV7lErIVG0l4QnBX/exec";
+
 const LS_URL = "paju_api_url";
 const getSavedUrl = () => {
+  // URL 파라미터 → 하드코딩 → localStorage 순으로 확인
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("api")) return params.get("api");
+  if (APPS_SCRIPT_URL && !APPS_SCRIPT_URL.includes("여기에URL입력")) return APPS_SCRIPT_URL;
   try { return localStorage.getItem(LS_URL) || ""; } catch(e) { return ""; }
 };
 const saveUrl = (url) => {
@@ -68,7 +75,8 @@ function App() {
   const [responses, setResponses] = useState({});
   const [loading, setLoading] = useState(false);
 
-  const [screen, setScreen] = useState(getSavedUrl() ? "login" : "setup");
+  const initialUrl = getSavedUrl();
+  const [screen, setScreen] = useState(initialUrl ? "login" : "setup");
   const [role, setRole] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
