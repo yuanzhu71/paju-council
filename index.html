@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>파주시의회 행사 참석 관리</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f4f6fb; font-family: 'Apple SD Gothic Neo','Noto Sans KR',sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const INITIAL_MEMBERS = ["박대성","이익선","이진아","박신성","이혜정","윤희정","박은주","이정은","최창호","손성익","최유각","손형배","이성철","목진혁","오창식"];
+const ROLES = { STAFF:"staff", MEMBER:"member" };
+const uid = () => Math.random().toString(36).slice(2,8);
+const fmt = d => d ? new Date(d).toLocaleString("ko-KR",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
+
+const C = {
+  primary:"#1a5fa8", primaryLight:"#e8f0fb",
+  accent:"#2e9e5b", danger:"#d9534f", warning:"#f0a500",
+  bg:"#f4f6fb", card:"#ffffff", border:"#dde3ef",
+  text:"#1e2533", sub:"#5a6480", placeholder:"#a0aabf"
+};
+const s = {
+  app:{minHeight:"100vh",background:C.bg,fontFamily:"'Apple SD Gothic Neo','Noto Sans KR',sans-serif",color:C.text,maxWidth:480,margin:"0 auto",paddingBottom:32},
+  header:{background:C.primary,color:"#fff",padding:"16px 20px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 2px 8px rgba(26,95,168,0.18)"},
+  headerTitle:{fontSize:17,fontWeight:700,flex:1},
+  card:{background:C.card,borderRadius:12,boxShadow:"0 1px 6px rgba(0,0,0,0.07)",margin:"12px 16px",overflow:"hidden"},
+  btn:(col="#1a5fa8",full=false)=>({background:col,color:"#fff",border:"none",borderRadius:8,padding:"11px 18px",fontWeight:600,fontSize:14,cursor:"pointer",width:full?"100%":"auto"}),
+  outlineBtn:{background:"#fff",color:C.primary,border:`1.5px solid ${C.primary}`,borderRadius:8,padding:"10px 18px",fontWeight:600,fontSize:14,cursor:"pointer"},
+  input:{width:"100%",border:`1.5px solid ${C.border}`,borderRadius:8,padding:"10px 12px",fontSize:14,outline:"none",boxSizing:"border-box",background:"#fff"},
+  label:{fontSize:13,fontWeight:600,color:C.sub,marginBottom:4,display:"block"},
+  badge:(col)=>({display:"inline-block",background:col+"22",color:col,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:600}),
+  tag:(active)=>({display:"inline-block",border:`1.5px solid ${active?C.primary:C.border}`,background:active?C.primaryLight:"#fff",color:active?C.primary:C.sub,borderRadius:8,padding:"6px 14px",fontSize:13,cursor:"pointer",fontWeight:active?700:400}),
+};
+
+function makeApi(url) {
+  const get = (type) => fetch(`${url}?type=${type}`).then(r=>r.json());
+  const post = (type, data) => fetch(url, {method:"POST", body:JSON.stringify({type,data})}).then(r=>r.json());
+  return { get, post };
+}
+
+// ── 설정 저장 (sessionStorage → localStorage 순으로 시도) ────
+const LS_URL = "paju_api_url";
+const getSavedUrl = () => {
+  try { return localStorage.getItem(LS_URL) || ""; } catch(e) { return ""; }
+};
+const saveUrl = (url) => {
+  try { localStorage.setItem(LS_URL, url); } catch(e) {}
+};
+
+function App() {
+  const [apiUrl, setApiUrl] = useState(getSavedUrl);
+  const [apiInput, setApiInput] = useState(getSavedUrl);
+  const [apiConnected, setApiConnected] = useState(false);
+  const [apiLoading, setApiLoading] = useState(false);
+  const [apiError, setApiError] = useState("");
+
+  const [members, setMembersState] = useState(INITIAL_MEMBERS);
+  const [events, setEvents] = useState([]);
+  const [responses, setResponses] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  const [screen, setScreen] = useState(getSavedUrl() ? "login" : "setup");
+  const [role, setRole] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),2800); };
+  const go = (sc, ev=null) => { if(ev!==null) setSelectedEvent(ev); setScreen(sc); };
+  const api = apiUrl ? makeApi(apiUrl) : null;
+
+  const loadAll = useCallback(async (a) => {
+    const target = a || api;
+    if(!target) return;
+    setLoading(true);
+    try {
+      const [evRes, rRes, mRes] = await Promise.all([target.get("events"), target.get("responses"), target.get("members")]);
+      if(evRes.ok) setEvents(evRes.events);
+      if(rRes.ok) setResponses(rRes.responses);
+      if(mRes.ok && mRes.members.length > 0) setMembersState(mRes.members);
+    } catch(e) { showToast("데이터 로드 실패","error"); }
+    setLoading(false);
+  }, [apiUrl]);
+
+  useEffect(() => { if(apiUrl) { setApiConnected(true); loadAll(); } }, []);
+
+  const connectSheet = async () => {
+    if(!apiInput.trim()) return;
+    setApiLoading(true); setApiError("");
+    try {
+      const res = await makeApi(apiInput.trim()).get("ping");
+      if(res.ok) {
+        setApiUrl(apiInput.trim());
+        saveUrl(apiInput.trim());
+        setApiConnected(true);
+        await loadAll(makeApi(apiInput.trim()));
+        showToast("구글 시트 연결 성공!");
+        go("login");
+      } else {
+        setApiError("응답 오류: " + (res.error||"알 수 없음"));
+      }
+    } catch(e) {
+      setApiError("연결 실패: URL을 확인해 주세요. (" + e.message + ")");
+    }
+    setApiLoading(false);
+  };
+
+  const setMembers = async (newList) => {
+    setMembersState(newList);
+    if(api) { await api.post("save_members",{members:newList}); showToast("의원 명단 저장됨"); }
+  };
+
+  const addEvent = async (ev) => {
+    const newEv = {...ev, id:uid(), createdAt:new Date().toISOString()};
+    setEvents(p=>[newEv,...p]);
+    setResponses(p=>({...p,[newEv.id]:{}}));
+    if(api) await api.post("save_event", newEv);
+    showToast("행사가 등록되었습니다.");
+    go("staff-home");
+  };
+
+  const submitResponse = async (eventId, memberName, data) => {
+    setResponses(p=>({...p,[eventId]:{...p[eventId],[memberName]:data}}));
+    if(api) await api.post("save_response",{eventId, member:memberName, ...data});
+    showToast("응답이 제출되었습니다.");
+    go("member-home");
+  };
+
+  const logout = () => { setRole(null); setCurrentUser(null); go("login"); };
+
+  // ── 설정 화면 ──────────────────────────────────────────────
+  if(screen==="setup") return (
+    <div style={s.app}>
+      <div style={{...s.header,flexDirection:"column",textAlign:"center",padding:"28px 20px",justifyContent:"center"}}>
+        <div style={{fontSize:34,marginBottom:6}}>🏛️</div>
+        <div style={{fontSize:19,fontWeight:800}}>파주시의회</div>
+        <div style={{fontSize:13,opacity:0.85,marginTop:2}}>행사 참석 관리 시스템</div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"18px 18px 8px",fontWeight:700,fontSize:15}}>📊 구글 시트 연결</div>
+        <div style={{padding:"0 18px 18px"}}>
+          <div style={{fontSize:13,color:C.sub,marginBottom:12,lineHeight:1.6}}>
+            Google Apps Script 웹 앱 배포 URL을 입력하세요.
+          </div>
+          <label style={s.label}>Apps Script 웹 앱 URL</label>
+          <input style={{...s.input,marginBottom:8}} value={apiInput}
+            onChange={e=>setApiInput(e.target.value)}
+            placeholder="https://script.google.com/macros/s/.../exec"/>
+          {apiError&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>{apiError}</div>}
+          <button onClick={connectSheet} disabled={apiLoading||!apiInput.trim()}
+            style={{...s.btn(C.primary,true),opacity:(apiLoading||!apiInput.trim())?0.5:1}}>
+            {apiLoading?"연결 중...":"연결하기"}
+          </button>
+          <div style={{marginTop:10,textAlign:"center"}}>
+            <button onClick={()=>go("login")}
+              style={{background:"none",border:"none",color:C.sub,fontSize:13,cursor:"pointer",textDecoration:"underline"}}>
+              연결 없이 임시 데이터로 시작 →
+            </button>
+          </div>
+        </div>
+      </div>
+      <Toast toast={toast}/>
+    </div>
+  );
+
+  // ── 로그인 ─────────────────────────────────────────────────
+  if(screen==="login") return (
+    <div style={s.app}>
+      <div style={{...s.header,flexDirection:"column",textAlign:"center",padding:"28px 20px",justifyContent:"center"}}>
+        <div style={{fontSize:34,marginBottom:6}}>🏛️</div>
+        <div style={{fontSize:19,fontWeight:800}}>파주시의회</div>
+        <div style={{fontSize:13,opacity:0.85,marginTop:2}}>행사 참석 관리 시스템</div>
+        {apiConnected&&<div style={{fontSize:11,marginTop:6,background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"3px 12px"}}>🟢 구글 시트 연결됨</div>}
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"16px 20px 8px",fontWeight:700,fontSize:15,borderBottom:`1px solid ${C.border}`}}>역할 선택</div>
+        {[{r:ROLES.STAFF,label:"📋  행사 담당 직원",desc:"행사 등록 및 응답 현황 관리"},{r:ROLES.MEMBER,label:"🏅  시의원",desc:"행사 조회 및 참석 의사 제출"}].map(({r,label,desc})=>(
+          <div key={r} onClick={()=>{setRole(r);setCurrentUser(null);}}
+            style={{padding:"16px 20px",cursor:"pointer",background:role===r?C.primaryLight:"#fff",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${role===r?C.primary:C.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              {role===r&&<div style={{width:12,height:12,borderRadius:"50%",background:C.primary}}/>}
+            </div>
+            <div><div style={{fontWeight:600,fontSize:14}}>{label}</div><div style={{fontSize:12,color:C.sub}}>{desc}</div></div>
+          </div>
+        ))}
+      </div>
+      {role===ROLES.MEMBER&&(
+        <div style={s.card}>
+          <div style={{padding:"16px 20px 8px",fontWeight:700,fontSize:14}}>의원 선택</div>
+          <div style={{padding:"0 20px 16px",display:"flex",flexWrap:"wrap",gap:8}}>
+            {members.map(m=><span key={m} onClick={()=>setCurrentUser(m)} style={s.tag(currentUser===m)}>{m}</span>)}
+          </div>
+        </div>
+      )}
+      <div style={{padding:"8px 16px",display:"flex",flexDirection:"column",gap:8}}>
+        <button disabled={!role||(role===ROLES.MEMBER&&!currentUser)}
+          style={{...s.btn(C.primary,true),opacity:(!role||(role===ROLES.MEMBER&&!currentUser))?0.5:1}}
+          onClick={()=>go(role===ROLES.STAFF?"staff-home":"member-home")}>
+          {role===ROLES.STAFF?"담당 직원으로 입장":"의원으로 입장"}
+        </button>
+        <button onClick={()=>go("setup")} style={{...s.outlineBtn,width:"100%",textAlign:"center"}}>⚙️ 구글 시트 설정</button>
+      </div>
+      <Toast toast={toast}/>
+    </div>
+  );
+
+  // ── 담당 직원 홈 ──────────────────────────────────────────
+  if(screen==="staff-home") return (
+    <div style={s.app}>
+      <div style={s.header}>
+        <div style={s.headerTitle}>📋 담당 직원</div>
+        <button onClick={()=>loadAll()} style={{...s.btn("#ffffff33"),padding:"7px 10px",fontSize:12}}>↻</button>
+        <button onClick={()=>go("manage-members")} style={{...s.btn("#fff"),color:C.primary,padding:"7px 12px",fontSize:12}}>의원관리</button>
+        <button onClick={logout} style={{...s.btn("#ffffff33"),padding:"7px 12px",fontSize:12}}>로그아웃</button>
+      </div>
+      <div style={{padding:"16px 16px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontWeight:700,fontSize:15}}>행사 목록</div>
+        <button onClick={()=>go("create-event")} style={s.btn()}>+ 행사 등록</button>
+      </div>
+      {loading&&<div style={{textAlign:"center",padding:32,color:C.sub,fontSize:14}}>불러오는 중...</div>}
+      {!loading&&events.length===0&&<Empty text="등록된 행사가 없습니다"/>}
+      {events.map(ev=>(
+        <EventCard key={ev.id} ev={ev} responses={responses[ev.id]||{}} members={members}
+          onClick={()=>go("event-responses",ev)} role="staff"/>
+      ))}
+      <Toast toast={toast}/>
+    </div>
+  );
+
+  // ── 의원 홈 ───────────────────────────────────────────────
+  if(screen==="member-home") return (
+    <div style={s.app}>
+      <div style={s.header}>
+        <div style={s.headerTitle}>🏅 {currentUser} 의원</div>
+        <button onClick={()=>loadAll()} style={{...s.btn("#ffffff33"),padding:"7px 10px",fontSize:12}}>↻</button>
+        <button onClick={logout} style={{...s.btn("#ffffff33"),padding:"7px 12px",fontSize:12}}>로그아웃</button>
+      </div>
+      <div style={{padding:"16px 16px 8px",fontWeight:700,fontSize:15}}>행사 목록</div>
+      {loading&&<div style={{textAlign:"center",padding:32,color:C.sub,fontSize:14}}>불러오는 중...</div>}
+      {events.map(ev=>{
+        const t=ev.targetMembers&&ev.targetMembers.length>0?ev.targetMembers:members;
+        if(!t.includes(currentUser)) return null;
+        return <EventCard key={ev.id} ev={ev} responses={responses[ev.id]||{}} members={members}
+          myRes={(responses[ev.id]||{})[currentUser]} onClick={()=>go("event-detail",ev)} role="member"/>;
+      })}
+      <Toast toast={toast}/>
+    </div>
+  );
+
+  if(screen==="event-detail"&&selectedEvent) return (
+    <EventDetail ev={selectedEvent} members={members} responses={responses[selectedEvent.id]||{}}
+      currentUser={currentUser} onSubmit={(d)=>submitResponse(selectedEvent.id,currentUser,d)} onBack={()=>go("member-home")}/>
+  );
+  if(screen==="event-responses"&&selectedEvent) return (
+    <EventResponses ev={selectedEvent} members={members} responses={responses[selectedEvent.id]||{}} onBack={()=>go("staff-home")}/>
+  );
+  if(screen==="create-event") return (
+    <CreateEvent members={members} onSave={addEvent} onBack={()=>go("staff-home")}/>
+  );
+  if(screen==="manage-members") return (
+    <ManageMembers members={members} setMembers={setMembers} onBack={()=>go("staff-home")}/>
+  );
+  return null;
+}
+
+function EventCard({ev,responses,members,myRes,onClick,role}) {
+  const targets=ev.targetMembers&&ev.targetMembers.length>0?ev.targetMembers:members;
+  const answered=targets.filter(m=>responses[m]).length;
+  const attending=targets.filter(m=>responses[m]?.attend).length;
+  const pct=targets.length>0?Math.round(answered/targets.length*100):0;
+  return (
+    <div style={{...s.card,cursor:"pointer"}} onClick={onClick}>
+      <div style={{padding:"14px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+          <div style={{fontWeight:700,fontSize:15,flex:1,marginRight:8}}>{ev.title}</div>
+          {role==="member"&&myRes&&<span style={s.badge(myRes.attend?C.accent:C.danger)}>{myRes.attend?"참석":"불참"}</span>}
+          {role==="member"&&!myRes&&<span style={s.badge(C.warning)}>미응답</span>}
+        </div>
+        <div style={{fontSize:13,color:C.sub,marginBottom:2}}>📅 {fmt(ev.datetime)}</div>
+        <div style={{fontSize:13,color:C.sub,marginBottom:role==="staff"?8:0}}>📍 {ev.location}</div>
+        {role==="staff"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:C.sub,marginBottom:3}}>
+              <span>응답 {answered}/{targets.length}명 · 참석 <b style={{color:C.accent}}>{attending}명</b></span>
+              <span>{pct}%</span>
+            </div>
+            <div style={{height:6,background:C.border,borderRadius:4,overflow:"hidden"}}>
+              <div style={{height:"100%",width:pct+"%",background:C.accent,borderRadius:4}}/>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EventDetail({ev,members,responses,currentUser,onSubmit,onBack}) {
+  const targets=ev.targetMembers&&ev.targetMembers.length>0?ev.targetMembers:members;
+  const existing=responses[currentUser];
+  const [attend,setAttend]=useState(existing?.attend??null);
+  const [useVehicle,setUseVehicle]=useState(existing?.useVehicle??null);
+  const [hasMeal,setHasMeal]=useState(existing?.hasMeal??null);
+  const [menu,setMenu]=useState(existing?.menu??"");
+  const [saving,setSaving]=useState(false);
+  const attendingMembers=targets.filter(m=>responses[m]?.attend);
+  const absentMembers=targets.filter(m=>responses[m]&&!responses[m].attend);
+  const notAnswered=targets.filter(m=>!responses[m]);
+  const canSubmit=attend!==null&&(!ev.showVehicle||useVehicle!==null)&&(!ev.showMeal||hasMeal!==null)&&(!ev.showMenu||!hasMeal||menu!=="");
+  const handleSubmit=async()=>{
+    setSaving(true);
+    await onSubmit({attend,useVehicle:ev.showVehicle?useVehicle:null,hasMeal:ev.showMeal?hasMeal:null,menu:ev.showMenu&&hasMeal?menu:null,submittedAt:new Date().toISOString()});
+    setSaving(false);
+  };
+  return (
+    <div style={s.app}>
+      <div style={s.header}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer",padding:"0 8px 0 0"}}>‹</button>
+        <div style={s.headerTitle}>{ev.title}</div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"16px"}}>
+          <InfoRow icon="📅" label="일시" value={fmt(ev.datetime)}/>
+          <InfoRow icon="📍" label="장소" value={ev.location}/>
+          {ev.description&&<InfoRow icon="📝" label="설명" value={ev.description}/>}
+          <div style={{marginTop:10,padding:"12px",background:C.primaryLight,borderRadius:8}}>
+            <div style={{fontSize:12,color:C.primary,fontWeight:700,marginBottom:8}}>✅ 참석 예정 의원 ({attendingMembers.length}명)</div>
+            {attendingMembers.length===0
+              ?<div style={{fontSize:12,color:C.sub}}>아직 참석 의사를 밝힌 의원이 없습니다.</div>
+              :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {attendingMembers.map(m=><span key={m} style={{fontSize:12,padding:"3px 10px",borderRadius:20,background:C.accent+"22",color:C.accent,border:`1px solid ${C.accent}`,fontWeight:600}}>{m}</span>)}
+              </div>}
+            <div style={{display:"flex",gap:10,marginTop:10,fontSize:12,color:C.sub}}>
+              <span>조사대상 <b style={{color:C.text}}>{targets.length}명</b></span>
+              <span>·</span><span>불참 <b style={{color:C.danger}}>{absentMembers.length}명</b></span>
+              <span>·</span><span>미응답 <b style={{color:C.warning}}>{notAnswered.length}명</b></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"14px 16px 4px",fontWeight:700,fontSize:14,borderBottom:`1px solid ${C.border}`}}>📋 나의 응답</div>
+        <div style={{padding:"14px 16px"}}>
+          <YesNo label="참석 여부 *" value={attend} onChange={setAttend} yesLabel="참석" noLabel="불참"/>
+          {ev.showVehicle&&<YesNo label="공용차량 이용" value={useVehicle} onChange={setUseVehicle} yesLabel="이용" noLabel="미이용"/>}
+          {ev.showMeal&&<YesNo label="식사 여부" value={hasMeal} onChange={setHasMeal} yesLabel="식사" noLabel="불필요"/>}
+          {ev.showMenu&&hasMeal&&(
+            <div style={{marginBottom:14}}>
+              <label style={s.label}>식사 메뉴 선택 *</label>
+              <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                {(ev.menus||[]).map(m=><span key={m} onClick={()=>setMenu(m)} style={s.tag(menu===m)}>{m}</span>)}
+              </div>
+            </div>
+          )}
+          <button onClick={handleSubmit} disabled={!canSubmit||saving}
+            style={{...s.btn(C.accent,true),marginTop:4,opacity:(canSubmit&&!saving)?1:0.5}}>
+            {saving?"저장 중...":(existing?"응답 수정":"응답 제출")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EventResponses({ev,members,responses,onBack}) {
+  const targets=ev.targetMembers&&ev.targetMembers.length>0?ev.targetMembers:members;
+  const attending=targets.filter(m=>responses[m]?.attend);
+  const absent=targets.filter(m=>responses[m]&&!responses[m].attend);
+  const notAnswered=targets.filter(m=>!responses[m]);
+  const menuCounts={};
+  if(ev.showMenu) attending.forEach(m=>{ const mn=responses[m]?.menu; if(mn) menuCounts[mn]=(menuCounts[mn]||0)+1; });
+  return (
+    <div style={s.app}>
+      <div style={s.header}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer",padding:"0 8px 0 0"}}>‹</button>
+        <div style={s.headerTitle}>{ev.title} — 현황</div>
+      </div>
+      <div style={{...s.card,margin:"12px 16px 4px"}}>
+        <div style={{padding:"14px 16px",display:"flex",gap:8,justifyContent:"space-around",textAlign:"center"}}>
+          {[{label:"조사대상",val:targets.length,col:C.primary},{label:"참석",val:attending.length,col:C.accent},{label:"불참",val:absent.length,col:C.danger},{label:"미응답",val:notAnswered.length,col:C.warning}].map(({label,val,col})=>(
+            <div key={label}><div style={{fontSize:24,fontWeight:800,color:col}}>{val}</div><div style={{fontSize:12,color:C.sub}}>{label}</div></div>
+          ))}
+        </div>
+        <div style={{padding:"0 16px 14px"}}>
+          <div style={{height:8,background:C.border,borderRadius:4,overflow:"hidden",display:"flex"}}>
+            <div style={{height:"100%",width:(attending.length/Math.max(targets.length,1)*100)+"%",background:C.accent}}/>
+            <div style={{height:"100%",width:(absent.length/Math.max(targets.length,1)*100)+"%",background:C.danger+"99"}}/>
+          </div>
+        </div>
+      </div>
+      {ev.showMenu&&Object.keys(menuCounts).length>0&&(
+        <div style={s.card}>
+          <div style={{padding:"12px 16px 8px",fontWeight:700,fontSize:13,color:C.sub}}>🍽️ 메뉴 집계</div>
+          {Object.entries(menuCounts).map(([mn,cnt])=>(
+            <div key={mn} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between"}}>
+              <span style={{fontSize:14}}>{mn}</span><span style={{fontWeight:700,color:C.primary}}>{cnt}명</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={s.card}>
+        <div style={{padding:"12px 16px 4px",fontWeight:700,fontSize:13,color:C.sub}}>의원별 응답 상세</div>
+        {attending.length>0&&<SectionHeader label="✅ 참석" col={C.accent}/>}
+        {attending.map(m=><MemberRow key={m} m={m} r={responses[m]} ev={ev}/>)}
+        {absent.length>0&&<SectionHeader label="❌ 불참" col={C.danger}/>}
+        {absent.map(m=><MemberRow key={m} m={m} r={responses[m]} ev={ev}/>)}
+        {notAnswered.length>0&&<SectionHeader label="⏳ 미응답" col={C.warning}/>}
+        {notAnswered.map(m=>(
+          <div key={m} style={{padding:"11px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center"}}>
+            <span style={{flex:1,fontSize:14}}>{m}</span><span style={s.badge(C.warning)}>미응답</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SectionHeader({label,col}) {
+  return <div style={{padding:"8px 16px",background:col+"11",fontSize:12,fontWeight:700,color:col,borderBottom:`1px solid ${C.border}`}}>{label}</div>;
+}
+function MemberRow({m,r,ev}) {
+  return (
+    <div style={{padding:"11px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      <span style={{flex:1,fontSize:14,fontWeight:500}}>{m}</span>
+      {ev.showVehicle&&r.useVehicle!==null&&<span style={s.badge(C.primary)}>{r.useVehicle?"차량이용":"개별이동"}</span>}
+      {ev.showMeal&&r.hasMeal!==null&&<span style={s.badge("#777")}>{r.hasMeal?(r.menu||"식사O"):"식사X"}</span>}
+    </div>
+  );
+}
+
+function CreateEvent({members,onSave,onBack}) {
+  const [form,setForm]=useState({title:"",datetime:"",location:"",description:"",targetMembers:[],showVehicle:false,showMeal:false,showMenu:false,menus:[""]});
+  const set=(k,v)=>setForm(p=>({...p,[k]:v}));
+  const toggleMember=m=>set("targetMembers",form.targetMembers.includes(m)?form.targetMembers.filter(x=>x!==m):[...form.targetMembers,m]);
+  const allSelected=form.targetMembers.length===members.length;
+  const valid=form.title&&form.datetime&&form.location;
+  return (
+    <div style={s.app}>
+      <div style={s.header}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer",padding:"0 8px 0 0"}}>‹</button>
+        <div style={s.headerTitle}>행사 등록</div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"16px"}}>
+          <Field label="행사명 *"><input style={s.input} value={form.title} onChange={e=>set("title",e.target.value)} placeholder="예) 파주시 환경정책 토론회"/></Field>
+          <Field label="일시 *"><input style={s.input} type="datetime-local" value={form.datetime} onChange={e=>set("datetime",e.target.value)}/></Field>
+          <Field label="장소 *"><input style={s.input} value={form.location} onChange={e=>set("location",e.target.value)} placeholder="예) 파주시의회 대회의실"/></Field>
+          <Field label="행사 설명"><textarea style={{...s.input,height:70,resize:"vertical"}} value={form.description} onChange={e=>set("description",e.target.value)} placeholder="행사에 대한 간략한 설명"/></Field>
+        </div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"14px 16px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:700,fontSize:14}}>조사 대상 의원 <span style={{fontSize:12,color:C.sub,fontWeight:400}}>(미선택시 전체)</span></div>
+          <button onClick={()=>set("targetMembers",allSelected?[]:members)} style={{...s.outlineBtn,padding:"5px 10px",fontSize:12}}>{allSelected?"전체해제":"전체선택"}</button>
+        </div>
+        <div style={{padding:"0 16px 16px",display:"flex",flexWrap:"wrap",gap:8}}>
+          {members.map(m=><span key={m} onClick={()=>toggleMember(m)} style={s.tag(form.targetMembers.includes(m))}>{m}</span>)}
+        </div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"14px 16px 8px",fontWeight:700,fontSize:14}}>조사 항목 설정</div>
+        <div style={{padding:"0 16px 16px"}}>
+          {[{k:"showVehicle",label:"🚌 공용차량 이용 여부"},{k:"showMeal",label:"🍽️ 식사 여부"},{k:"showMenu",label:"📋 식사 메뉴 선택"}].map(({k,label})=>(
+            <div key={k} onClick={()=>set(k,!form[k])} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}>
+              <div style={{width:22,height:22,borderRadius:5,border:`2px solid ${form[k]?C.primary:C.border}`,background:form[k]?C.primary:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {form[k]&&<span style={{color:"#fff",fontSize:14,fontWeight:800}}>✓</span>}
+              </div>
+              <span style={{fontSize:14,fontWeight:form[k]?600:400,color:form[k]?C.text:C.sub}}>{label}</span>
+            </div>
+          ))}
+          {form.showMenu&&(
+            <div style={{marginTop:14}}>
+              <label style={s.label}>메뉴 목록 입력</label>
+              {form.menus.map((m,i)=>(
+                <div key={i} style={{display:"flex",gap:6,marginBottom:8}}>
+                  <input style={{...s.input,flex:1}} value={m} onChange={e=>{const a=[...form.menus];a[i]=e.target.value;set("menus",a);}} placeholder={`메뉴 ${i+1}`}/>
+                  {form.menus.length>1&&<button onClick={()=>set("menus",form.menus.filter((_,j)=>j!==i))} style={{...s.btn(C.danger),padding:"8px 12px",fontSize:13}}>✕</button>}
+                </div>
+              ))}
+              <button onClick={()=>set("menus",[...form.menus,""])} style={s.outlineBtn}>+ 메뉴 추가</button>
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{padding:"8px 16px"}}>
+        <button onClick={()=>onSave({...form,menus:form.menus.filter(m=>m.trim())})} disabled={!valid} style={{...s.btn(C.accent,true),opacity:valid?1:0.5}}>행사 등록</button>
+      </div>
+    </div>
+  );
+}
+
+function ManageMembers({members,setMembers,onBack}) {
+  const [newName,setNewName]=useState("");
+  const add=()=>{if(newName.trim()&&!members.includes(newName.trim())){setMembers([...members,newName.trim()]);setNewName("");}};
+  return (
+    <div style={s.app}>
+      <div style={s.header}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer",padding:"0 8px 0 0"}}>‹</button>
+        <div style={s.headerTitle}>의원 명단 관리</div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"14px 16px 8px",fontWeight:700,fontSize:14}}>의원 추가</div>
+        <div style={{padding:"0 16px 16px",display:"flex",gap:8}}>
+          <input style={{...s.input,flex:1}} value={newName} onChange={e=>setNewName(e.target.value)} placeholder="이름 입력" onKeyDown={e=>e.key==="Enter"&&add()}/>
+          <button onClick={add} style={s.btn()}>추가</button>
+        </div>
+      </div>
+      <div style={s.card}>
+        <div style={{padding:"12px 16px 4px",fontWeight:700,fontSize:13,color:C.sub}}>현재 의원 ({members.length}명)</div>
+        {members.map(m=>(
+          <div key={m} style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center"}}>
+            <span style={{flex:1,fontWeight:500}}>{m}</span>
+            <button onClick={()=>setMembers(members.filter(x=>x!==m))} style={{...s.btn(C.danger),padding:"5px 10px",fontSize:12}}>삭제</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function YesNo({label,value,onChange,yesLabel,noLabel}) {
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={s.label}>{label}</label>
+      <div style={{display:"flex",gap:8}}>
+        {[{v:true,l:yesLabel,col:C.accent},{v:false,l:noLabel,col:C.danger}].map(({v,l,col})=>(
+          <button key={l} onClick={()=>onChange(v)} style={{flex:1,padding:"10px",borderRadius:8,border:`2px solid ${value===v?col:C.border}`,background:value===v?col+"18":"#fff",color:value===v?col:C.sub,fontWeight:value===v?700:400,cursor:"pointer",fontSize:14}}>{l}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+function InfoRow({icon,label,value}) {
+  return (
+    <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"flex-start"}}>
+      <span style={{fontSize:16,width:20,flexShrink:0}}>{icon}</span>
+      <div><span style={{fontSize:12,color:C.sub,fontWeight:600}}>{label}  </span><span style={{fontSize:13}}>{value}</span></div>
+    </div>
+  );
+}
+function Field({label,children}) { return <div style={{marginBottom:14}}><label style={s.label}>{label}</label>{children}</div>; }
+function Empty({text}) { return <div style={{textAlign:"center",padding:"48px 0",color:C.placeholder,fontSize:14}}>{text}</div>; }
+function Toast({toast}) {
+  if(!toast) return null;
+  return <div style={{position:"fixed",bottom:32,left:"50%",transform:"translateX(-50%)",background:toast.type==="success"?C.accent:C.danger,color:"#fff",padding:"10px 22px",borderRadius:24,fontWeight:600,fontSize:14,boxShadow:"0 4px 16px rgba(0,0,0,0.18)",zIndex:9999,whiteSpace:"nowrap"}}>{toast.msg}</div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
